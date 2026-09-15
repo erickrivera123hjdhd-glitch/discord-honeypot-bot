@@ -36,6 +36,7 @@ async def setup_hook():
 @bot.event
 async def on_ready():
     print(f"{bot.user} has connected to Discord!")
+    print("Honeypot Guardian is ready. Text messages are ignored; attachments trigger the honeypot.")
     await bot.change_presence(activity=discord.Game(name="Honeypot Guardian"))
 
 @bot.event
