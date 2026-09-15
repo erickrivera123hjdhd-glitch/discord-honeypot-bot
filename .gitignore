@@ -1,0 +1,9 @@
+*.pyc
+__pycache__/
+.env
+.venv/
+venv/
+*.db
+honeypot.db
+.DS_Store
+Thumbs.db
