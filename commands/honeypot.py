@@ -9,95 +9,108 @@ class HoneypotView(discord.ui.View):
         self.bot = bot
         self.database = database
         self.guild_id = guild_id
+
+        self.toggle_button = discord.ui.Button(custom_id="honeypot_toggle", label="Enable Honeypot", style=discord.ButtonStyle.success)
+        self.configure_button = discord.ui.Button(custom_id="honeypot_configure", label="Configure Channel", style=discord.ButtonStyle.primary)
+        self.channels_button = discord.ui.Button(custom_id="honeypot_channels", label="View Channel", style=discord.ButtonStyle.secondary)
+        self.triggers_button = discord.ui.Button(custom_id="honeypot_triggers", label="Recent Triggers", style=discord.ButtonStyle.secondary)
+
+        self.toggle_button.callback = self.toggle_honeypot
+        self.configure_button.callback = self.configure_channel
+        self.channels_button.callback = self.view_channels
+        self.triggers_button.callback = self.view_triggers
+
+        self.add_item(self.toggle_button)
+        self.add_item(self.configure_button)
+        self.add_item(self.channels_button)
+        self.add_item(self.triggers_button)
         self._update_buttons()
 
     def _update_buttons(self):
-        self.clear_items()
         honeypot_data = self.database.get_honeypot_channel(self.guild_id)
         enabled = bool(honeypot_data and honeypot_data.get("enabled", False))
+        configured = bool(honeypot_data)
 
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.danger if enabled else discord.ButtonStyle.success,
-            label="Disable Honeypot" if enabled else "Enable Honeypot",
-            custom_id="toggle_honeypot"
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.primary,
-            label="Configure Channel",
-            custom_id="configure_channel"
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="View Channels",
-            custom_id="view_channels"
-        ))
-        self.add_item(discord.ui.Button(
-            style=discord.ButtonStyle.secondary,
-            label="View Recent Triggers",
-            custom_id="view_triggers"
-        ))
+        self.toggle_button.label = "Disable Honeypot" if enabled else "Enable Honeypot"
+        self.toggle_button.style = discord.ButtonStyle.danger if enabled else discord.ButtonStyle.success
+        self.toggle_button.disabled = not configured
+
+        self.configure_button.label = "Change Channel" if configured else "Configure Channel"
+        self.channels_button.label = "View Channel" if configured else "View Channel"
+        self.triggers_button.label = "Recent Triggers"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only administrators can use this panel.", ephemeral=True)
+        if not interaction.guild or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Only server administrators can use this panel.", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(style=discord.ButtonStyle.success, label="Enable Honeypot", custom_id="toggle_honeypot")
-    async def toggle_honeypot(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def toggle_honeypot(self, interaction: discord.Interaction):
         honeypot_data = self.database.get_honeypot_channel(self.guild_id)
-        enabled = bool(honeypot_data and honeypot_data.get("enabled", False))
+
+        if not honeypot_data:
+            await interaction.response.send_message(
+                "No honeypot channel is configured yet. Click Configure Channel first.",
+                ephemeral=True
+            )
+            return
+
+        enabled = bool(honeypot_data.get("enabled", False))
 
         if enabled:
             self.database.disable_honeypot(self.guild_id)
-            await interaction.response.send_message("Honeypot disabled.", ephemeral=True)
-        elif honeypot_data:
+            message = "🔴 Honeypot disabled."
+        else:
             self.database.set_honeypot_channel(
                 guild_id=self.guild_id,
                 channel_id=honeypot_data["channel_id"],
                 enabled=True
             )
-            await interaction.response.send_message("Honeypot enabled.", ephemeral=True)
-        else:
-            await interaction.response.send_message("No honeypot channel configured. Use Configure Channel first.", ephemeral=True)
+            message = "🟢 Honeypot enabled."
 
         self._update_buttons()
-        await interaction.message.edit(view=self)
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(message, ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.primary, label="Configure Channel", custom_id="configure_channel")
-    async def configure_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def configure_channel(self, interaction: discord.Interaction):
         await interaction.response.send_message(
-            "Please select a channel to configure as honeypot:",
+            "Select the channel you want to use as the honeypot:",
             view=ChannelSelectView(self.bot, self.database, self.guild_id, interaction.user),
             ephemeral=True
         )
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="View Channels", custom_id="view_channels")
-    async def view_channels(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def view_channels(self, interaction: discord.Interaction):
         honeypot_data = self.database.get_honeypot_channel(self.guild_id)
-        if honeypot_data and honeypot_data.get("enabled"):
-            channel = interaction.guild.get_channel(honeypot_data["channel_id"])
-            embed = discord.Embed(title="Honeypot Channel", color=discord.Color.green())
-            embed.add_field(name="Channel", value=channel.mention if channel else "Unknown", inline=False)
-            embed.add_field(name="Status", value="Enabled", inline=False)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        else:
-            await interaction.response.send_message("No honeypot channel is currently enabled.", ephemeral=True)
 
-    @discord.ui.button(style=discord.ButtonStyle.secondary, label="View Recent Triggers", custom_id="view_triggers")
-    async def view_triggers(self, interaction: discord.Interaction, button: discord.ui.Button):
-        triggers = self.database.get_recent_triggers(self.guild_id, limit=10)
-        if not triggers:
-            await interaction.response.send_message("No recent triggers.", ephemeral=True)
+        if not honeypot_data:
+            await interaction.response.send_message(
+                "No honeypot channel is configured.",
+                ephemeral=True
+            )
             return
 
-        embed = discord.Embed(title="Recent Triggers", color=discord.Color.red())
+        channel = interaction.guild.get_channel(honeypot_data["channel_id"])
+        status = "Enabled" if honeypot_data.get("enabled") else "Disabled"
+
+        embed = discord.Embed(title="Honeypot Channel", color=discord.Color.green())
+        embed.add_field(name="Channel", value=channel.mention if channel else "Unknown / deleted", inline=False)
+        embed.add_field(name="Status", value=status, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def view_triggers(self, interaction: discord.Interaction):
+        triggers = self.database.get_recent_triggers(self.guild_id, limit=10)
+
+        if not triggers:
+            await interaction.response.send_message("No recent honeypot triggers.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="Recent Honeypot Triggers", color=discord.Color.red())
         for trigger in triggers:
             channel = interaction.guild.get_channel(trigger["channel_id"])
             channel_name = channel.name if channel else "Unknown"
             embed.add_field(
                 name=f'{trigger["username"]} (ID: {trigger["user_id"]})',
-                value=f'Channel: {channel_name} | Type: {trigger["attachment_type"]} | {trigger["timestamp"]}',
+                value=f'Channel: {channel_name}\nType: {trigger["attachment_type"]}\nTime: {trigger["timestamp"]}',
                 inline=False
             )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -122,7 +135,10 @@ class ChannelSelectView(discord.ui.View):
 
     async def select_channel(self, interaction: discord.Interaction):
         if interaction.user.id != self.user.id and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Only the administrator who opened this selector can use it.", ephemeral=True)
+            await interaction.response.send_message(
+                "Only the administrator who opened this selector can use it.",
+                ephemeral=True
+            )
             return
 
         channel = self.select.values[0]
@@ -133,7 +149,7 @@ class ChannelSelectView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"Honeypot channel set to {channel.mention}!",
+            f"🟢 Honeypot channel set to {channel.mention}!",
             ephemeral=True
         )
         await self._send_warning_message(channel)
@@ -158,7 +174,11 @@ class HoneypotCog(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def honeypot(self, interaction: discord.Interaction):
         view = HoneypotView(self.bot, self.database, interaction.guild_id)
-        await interaction.response.send_message("Honeypot Configuration Panel", view=view, ephemeral=True)
+        await interaction.response.send_message(
+            "🍯 **Honeypot Configuration**\nUse the buttons below to manage your honeypot.",
+            view=view,
+            ephemeral=True
+        )
 
     @app_commands.command(name="honeypot_configure", description="Configure honeypot channel")
     @app_commands.checks.has_permissions(administrator=True)
@@ -175,13 +195,16 @@ class HoneypotCog(commands.Cog):
             )
         except discord.Forbidden:
             pass
-        await interaction.response.send_message(f"Honeypot channel set to {channel.mention}!", ephemeral=True)
+        await interaction.response.send_message(
+            f"🟢 Honeypot channel set to {channel.mention}!",
+            ephemeral=True
+        )
 
     @app_commands.command(name="honeypot_disable", description="Disable honeypot")
     @app_commands.checks.has_permissions(administrator=True)
     async def honeypot_disable(self, interaction: discord.Interaction):
         self.database.disable_honeypot(interaction.guild_id)
-        await interaction.response.send_message("Honeypot disabled.", ephemeral=True)
+        await interaction.response.send_message("🔴 Honeypot disabled.", ephemeral=True)
 
     @app_commands.command(name="honeypot_status", description="View honeypot status")
     async def honeypot_status(self, interaction: discord.Interaction):
